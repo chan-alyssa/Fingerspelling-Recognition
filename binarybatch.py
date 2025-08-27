@@ -7,8 +7,6 @@ from torch.optim.lr_scheduler import StepLR
 import h5py
 from torch.utils.data import Dataset, DataLoader
 
-# Custom Dataset for loading .h5 files
-
 class BOBSLDataset(Dataset):
     def __init__(self, file_path, transform=None, target_transform=None):
         with h5py.File(file_path, 'r') as f:
@@ -28,32 +26,6 @@ class BOBSLDataset(Dataset):
         # number = self.number[idx]
         #temporalletter = self.temporalletter[idx]
         return feature,label
-    
-class Net(nn.Module):
-    def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
-        self.dropout1 = nn.Dropout(0.25)
-        self.dropout2 = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = F.relu(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = F.max_pool2d(x, 2)
-        x = self.dropout1(x)
-        x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.dropout2(x)
-        x = self.fc2(x)
-        output = F.log_softmax(x, dim=1)
-        return output
-
 
 def train(args, model, device, train_loader, optimizer, epoch):
     model.train()
@@ -82,13 +54,13 @@ class BinaryClassifier(nn.Module):
         self.relu1 = nn.ReLU()
         self.dropout1 = nn.Dropout(dropout_prob)
         
-        # Second hidden layer (newly added)
+        # Second hidden layer 
         self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
         self.layer_norm2 = nn.LayerNorm(hidden_size // 2)
         self.relu2 = nn.ReLU()
         self.dropout2 = nn.Dropout(dropout_prob)
 
-        # Third hidden layer (newly added)
+        # Third hidden layer 
         self.fc3 = nn.Linear(hidden_size // 2, hidden_size // 4)
         self.layer_norm3 = nn.LayerNorm(hidden_size // 4)
         self.relu3 = nn.ReLU()
