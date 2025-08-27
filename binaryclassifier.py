@@ -26,13 +26,13 @@ class BinaryClassifier(nn.Module):
         self.relu1 = nn.ReLU()
         self.dropout1 = nn.Dropout(dropout_prob)
         
-        # Second hidden layer (newly added)
+        # Second hidden layer 
         self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
         self.layer_norm2 = nn.LayerNorm(hidden_size // 2)
         self.relu2 = nn.ReLU()
         self.dropout2 = nn.Dropout(dropout_prob)
 
-        # Third hidden layer (newly added)
+        # Third hidden layer
         self.fc3 = nn.Linear(hidden_size // 2, hidden_size // 4)
         self.layer_norm3 = nn.LayerNorm(hidden_size // 4)
         self.relu3 = nn.ReLU()
@@ -57,7 +57,7 @@ class BinaryClassifier(nn.Module):
         x = self.relu3(x)
         x = self.dropout3(x)
 
-        x = self.fc4(x)  # Output layer (no activation inside the model)
+        x = self.fc4(x) 
         return x
 
 
@@ -363,9 +363,13 @@ class BOBSLDataset(Dataset):
         return feature, label
 
 def main():
-        
-    train_file = "training1f86.h5"
-    test_file = "testing1f86.h5"
+    parser = argparse.ArgumentParser(description="Binary Classifier Training for BOBSL Dataset")
+    parser.add_argument('--train-file', type=str, default='training1f86.h5', help='Path to training H5 file')
+    parser.add_argument('--test-file', type=str, default='testing1f86.h5', help='Path to test H5 file')
+    parser.add_argument('--learning-rate', type=float, default=0.001, help='Learning rate for optimizer')
+    parser.add_argument('--epochs', type=int, default=1000, help='Number of training epochs')
+    parser.add_argument('--oversample', action='store_true', help='Use random oversampling for balancing classes')
+    args = parser.parse_args()
 
     training_data = BOBSLDataset(train_file)
     testing_data = BOBSLDataset(test_file)
@@ -376,9 +380,9 @@ def main():
     X_test = testing_data.feature
     y_test = testing_data.label
     video_list = testing_data.video_list
-
-    ros = RandomOverSampler(sampling_strategy='auto')
-    X_train_oversample, y_train_oversample = ros.fit_resample(X_train, y_train)
+    if args.oversample:
+        ros = RandomOverSampler(sampling_strategy='auto')
+        X_train_oversample, y_train_oversample = ros.fit_resample(X_train, y_train)
 
     scaler = StandardScaler()
     X_train_oversample = scaler.fit_transform(X_train_oversample)
@@ -398,7 +402,7 @@ def main():
 
     results = train_and_evaluate(
         model, X_train_tensor, y_train_tensor, X_test_tensor, y_test_tensor, video_list,
-        learning_rate=0.001, num_epochs=1000
+        learning_rate=args.learning_rate, num_epochs=args.epochs
     )
     plot_metrics(*results)
 
