@@ -1,0 +1,684 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+import h5py
+import joblib
+import string
+from collections import defaultdict
+from torch.utils.data import ConcatDataset, WeightedRandomSampler
+import copy
+import matplotlib.pyplot as plt
+from torch.utils.data import WeightedRandomSampler
+import random
+
+import torch
+import random
+
+# with gradient 1
+DEVICE = torch.device("cuda:1")
+
+# DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(DEVICE)
+CSLRTRAIN = "/work/alyssa/workspace/cslr/ftraining1f384.h5"
+CSLRTEST = "/work/alyssa/workspace/testingfiltered.h5"
+#TRANSPELLERTRAIN = "/work/alyssa/workspace/split1.h5f86.h5"
+TRANSPELLERTRAIN  = "/work/alyssa/workspace/ctcfiltered/split1.h5f86.h5"
+TRANSPELLERTRAIN1 = "/work/alyssa/workspace/ctcfiltered/split2.h5f86.h5"
+TRANSPELLERTRAIN2 = "/work/alyssa/workspace/ctcfiltered/split3.h5f86.h5"
+TRANSPELLERTRAIN3 = "/work/alyssa/workspace/ctcfiltered/split4.h5f86.h5"
+TRANSPELLERTRAIN4 = "/work/alyssa/workspace/ctcfiltered/split5.h5f86.h5"
+TRANSPELLERTRAIN5 = "/work/alyssa/workspace/ctcfiltered/split6.h5f86.h5"
+TRANSPELLERTRAIN6 = "/work/alyssa/workspace/ctcfiltered/split7.h5f86.h5"
+TRANSPELLERTRAIN7 = "/work/alyssa/workspace/ctcfiltered/split8.h5f86.h5"
+TRANSPELLERTRAIN8 = "/work/alyssa/workspace/ctcfiltered/split9.h5f86.h5"
+TRANSPELLERTRAIN9 = "/work/alyssa/workspace/ctcfiltered/split2.1.h5f86.h5"
+TRANSPELLERTRAIN10 = "/work/alyssa/workspace/ctcfiltered/split1.1.h5f86.h5"
+TRANSPELLERTRAIN11 = "/work/alyssa/workspace/ctcfiltered/split3.1.h5f86.h5"
+TRANSPELLERTRAIN12 = "/work/alyssa/workspace/ctcfiltered/split5.1.h5f86.h5"
+TRANSPELLERTRAIN13 = "/work/alyssa/workspace/ctcfiltered/split6.1.h5f86.h5"
+TRANSPELLERTRAIN14 = "/work/alyssa/workspace/ctcfiltered/split8.1.h5f86.h5"
+TRANSPELLERTRAIN15 = "/work/alyssa/workspace/ctcfiltered/split4.1.h5f86.h5"
+TRANSPELLERTRAIN16 = "/work/alyssa/workspace/ctcfiltered/split7.1.h5f86.h5"
+
+SCALER_PATH = "/work/alyssa/spellify/multi/scalermulti384_9a.pkl"
+SCALER_LIP = "/work/alyssa/mouthing/scaler_autoavsr.pkl"
+BATCH_SIZE = 16
+EPOCHS = 2000
+LR = 1e-4
+#NEED TO CHANGE FOR EACH!
+INPUT_DIM = 384
+OUTPUT_DIM = 27  # 26 letters + 1 blank for CTC
+# NAME = "transformerdropout"
+IGNORE_INDEX = 0  # for framewise CE loss, 0 is blank
+char_to_idx = {c: i + 1 for i, c in enumerate(string.ascii_lowercase)}  # a=1,...,z=26
+idx_to_char = {i: c for c, i in char_to_idx.items()}
+idx_to_char[0] = "<BLANK>"
+
+
+        
+def make_balanced_sampler(dataset):
+    labels = []
+    for _, _, _, y, _ in dataset:
+        word = ''.join([idx_to_char[i.item()] for i in y]).strip()
+        labels.append(word)
+
+    # count once
+    from collections import Counter
+    counts = Counter(labels)
+
+    weights = [1.0 / counts.get(w, 1) for w in labels]
+    return WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+
+def encode_word(word):
+    return [char_to_idx[c] for c in word.lower() if c in char_to_idx]
+def levenshtein_distance(ref, hyp):
+
+    m, n = len(ref), len(hyp)
+    dp = np.zeros((m + 1, n + 1), dtype=int)
+
+    for i in range(m + 1):
+        dp[i][0] = i
+    for j in range(n + 1):
+        dp[0][j] = j
+
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if ref[i - 1] == hyp[j - 1]:
+                cost = 0
+            else:
+                cost = 1
+            dp[i][j] = min(
+                dp[i - 1][j] + 1,      # deletion
+                dp[i][j - 1] + 1,      # insertion
+                dp[i - 1][j - 1] + cost  # substitution
+            )
+    return dp[m][n]
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        x = x + self.pe[:, :x.size(1)]
+
+        return self.dropout(x)
+
+def group_evaluate(subtitles, frame_numbers):
+    groups = []
+    current_group = []
+    prev_frame_num = None
+    prev_subtitle = None
+
+    for i, (frame_num, raw_subtitle) in enumerate(zip(frame_numbers, subtitles)):
+        if raw_subtitle is None or len(raw_subtitle) == 0:
+            subtitle = ""
+        else:
+            subtitle = raw_subtitle.decode('utf-8').strip()
+        
+        # Skip empty 
+        if not subtitle:
+            if current_group:
+                groups.append(current_group)
+                current_group = []
+            prev_frame_num = None
+            prev_subtitle = None
+            continue
+
+        # If same subtitle and frame number consecutive, add
+        if subtitle == prev_subtitle and (prev_frame_num is not None and frame_num == prev_frame_num + 1):
+            current_group.append(i)
+        else:
+            if current_group:
+                groups.append(current_group)
+            current_group = [i]
+
+        prev_frame_num = frame_num
+        prev_subtitle = subtitle
+
+    # Add last 
+    if current_group:
+        groups.append(current_group)
+
+    return groups  
+
+class WordCTCDataset(Dataset):
+    def __init__(self, h5_path, scaler, scalerlip):
+        with h5py.File(h5_path, 'r') as f:
+            self.features = f['video/features'][:]
+            self.lipfeatures = f['video/autoavsr'][:]
+            self.subtitles = f['video/subtitle'][:]
+            self.frame_numbers = f['video/frame_number'][:]
+            self.temporalletter = f['video/temporalletter4'][:]
+        reshaped = self.features.reshape(-1, self.features.shape[-1])
+        self.feat2 = scaler.transform(reshaped).reshape(self.features.shape)
+
+        reshaped = self.lipfeatures.reshape(-1, self.lipfeatures.shape[-1])
+        self.feat1 = scalerlip.transform(reshaped).reshape(self.lipfeatures.shape)
+        #self.feature = np.concatenate((feat1, feat2), axis=1)
+
+        self.groups = group_evaluate(self.subtitles, self.frame_numbers)
+        # print(f"Number of training samples (words): {len(self.groups)}")
+
+    def __len__(self):
+        return len(self.groups)
+
+    def __getitem__(self, idx):
+        indices = self.groups[idx]
+        x = self.feat2[indices]  # (T, F)
+        z = self.feat1[indices]  # (T, F)
+
+        raw_label = self.subtitles[indices[0]].decode("utf-8").strip()
+        words = raw_label.split()
+
+        if words:
+            word = words[0].lower()
+            if "*" in word and len(words) > 1:
+                word = words[1].lower()
+        else:
+            word = ""
+        y = encode_word(word)
+        allowed = set(word)
+
+        # ---- Framewise targets ----
+        fw_bytes = self.temporalletter[indices].flatten()
+        allowed = set(word)
+        fw_letters_encoded = []
+        for b in fw_bytes:
+            if isinstance(b, bytes):
+                ch = b.decode("utf-8", errors="ignore").lower().strip()
+            else:
+                ch = str(b).lower().strip()
+            fw_letters_encoded.append(char_to_idx.get(ch, 0))
+        
+        fw_targets = torch.tensor(fw_letters_encoded, dtype=torch.long)
+        x = torch.tensor(x, dtype=torch.float32)
+        z =  torch.tensor(z, dtype=torch.float32)
+        x, z, fw_targets = self.temporal_aug(x, z, fw_targets)
+
+        return x, z, torch.tensor(y, dtype=torch.long), fw_targets, allowed
+
+
+class Transpeller(Dataset):
+    def __init__(self, h5_path, scaler, scalerlip):
+        with h5py.File(h5_path, 'r') as f:
+            self.features = f['video/features384'][:]
+            self.lipfeatures = f['video/autoavsr'][:]
+            self.subtitles = f['video/subtitle'][:]
+            self.frame_numbers = f['video/frame_number'][:]
+            self.temporalletter = f['video/temporalletter8'][:]
+        reshaped = self.features.reshape(-1, self.features.shape[-1])
+        self.feat2 = scaler.transform(reshaped).reshape(self.features.shape)
+
+        reshaped = self.lipfeatures.reshape(-1, self.lipfeatures.shape[-1])
+        self.feat1 = scalerlip.transform(reshaped).reshape(self.lipfeatures.shape)
+        #self.feature = np.concatenate((feat1, feat2), axis=1)
+
+        self.groups = group_evaluate(self.subtitles, self.frame_numbers)
+        # print(f"Number of training samples (words): {len(self.groups)}")
+    def __len__(self):
+        return len(self.groups)
+
+    def __getitem__(self, idx):
+        indices = self.groups[idx]
+        x = self.feat2[indices]
+        z = self.feat1[indices]
+        # print(f"Indices: {indices}")
+        # letter = self.temporalletter[indices]
+        # print(letter)
+        raw_label = self.subtitles[indices[0]].decode("utf-8").strip()
+        word = raw_label.split()[0].lower() if raw_label else ""
+
+        y = encode_word(word)
+        fw_bytes = self.temporalletter[indices]  # shape (num_frames, 1)
+        # print(fw_bytes.shape)
+        fw_bytes_flat = fw_bytes.flatten()       # shape (num_frames,)
+        # print(fw_bytes_flat.shape)
+        allowed = set(word)
+
+        fw_letters_encoded = []
+
+        for b in fw_bytes_flat:
+
+            if isinstance(b, bytes):
+                ch = b.decode("utf-8", errors="ignore")
+            else:
+                ch = str(b)
+
+            ch = ch.lower().strip()
+
+            if ch in char_to_idx:
+                fw_letters_encoded.append(char_to_idx[ch])
+            else:
+                fw_letters_encoded.append(0)  
+        
+
+        fw_targets = torch.tensor(fw_letters_encoded, dtype=torch.long)
+        x = torch.tensor(x, dtype=torch.float32)
+        z =  torch.tensor(z, dtype=torch.float32)
+        x, z, fw_targets = self.temporal_aug(x, z, fw_targets)
+
+        return x, z, torch.tensor(y, dtype=torch.long), fw_targets, allowed
+
+
+def collate_ctc(batch, verbose=False):
+    inputs, inputslips, targets, framewise_targets, allowed_list = zip(*batch)  # <-- expect framewise_targets from dataset
+    input_lengths = torch.tensor([x.shape[0] for x in inputs])
+    target_lengths = torch.tensor([len(y) for y in targets])
+
+
+    max_T = max(input_lengths)
+    F = inputs[0].shape[1]
+
+    padded_inputs = torch.zeros(len(inputs), max_T, F)
+    padded_framewise = torch.zeros(len(inputs), max_T, dtype=torch.long)  # ✅ FIXED: remove extra dim
+    padded_lipinputs = torch.zeros(len(inputslips), max_T, inputslips[0].shape[1])
+    for i, (x, z, fw_tgt) in enumerate(zip(inputs, inputslips, framewise_targets)):
+        padded_inputs[i, :x.shape[0], :] = x
+        padded_framewise[i, :len(fw_tgt)] = fw_tgt  
+        padded_lipinputs[i, :z.shape[0], :] = z
+
+
+    concat_targets = torch.cat(targets)
+
+    return (
+        padded_inputs,
+        padded_lipinputs,
+        concat_targets,
+        input_lengths,
+        target_lengths,
+        list(targets),
+        padded_framewise,  # <-- new for CE
+        allowed_list
+    )
+
+
+def collate_ctctest(batch, verbose=False):
+    inputs, lipinputs, targets = zip(*batch)
+    input_lengths = torch.tensor([x.shape[0] for x in inputs])
+    target_lengths = torch.tensor([len(y) for y in targets])
+
+    max_T = max(input_lengths)
+    F = inputs[0].shape[1]
+    padded_inputs = torch.zeros(len(inputs), max_T, F)
+    padded_lipinputs = torch.zeros(len(lipinputs), max_T, lipinputs[0].shape[1])
+    for i, (x,z) in enumerate(zip(inputs, lipinputs)):
+        padded_inputs[i, :x.shape[0], :] = x
+        padded_lipinputs[i, :z.shape[0], :] = z
+
+
+    concat_targets = torch.cat(targets)
+
+    if verbose:
+        for i, y in enumerate(targets):
+            word = ''.join([idx_to_char[c.item()] for c in y])
+            #print(f"[Sample {i}] Word: '{word}', Frame length: {input_lengths[i].item()}")
+
+    return (
+        padded_inputs,
+        padded_lipinputs,
+        concat_targets,
+        input_lengths,
+        target_lengths,
+        list(targets),  # target_list
+    )
+
+
+    
+class TransformerCTC_LipCross(nn.Module):
+    def __init__(self, hand_size, lip_size, num_classes=27, d_model=128,
+                 nhead=4, num_layers=3, dropout=0.3):
+        super().__init__()
+
+        self.hand_fc = nn.Linear(hand_size, d_model)
+        self.lip_fc  = nn.Linear(lip_size, d_model)
+        self.ln_lip = nn.LayerNorm(d_model)
+        self.ln_hand = nn.LayerNorm(d_model)
+        self.pos = PositionalEncoding(d_model, dropout)
+
+        self.hand_enc = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=d_model, nhead=nhead,
+                dim_feedforward=512, dropout=dropout,
+                batch_first=True
+            ), num_layers=num_layers
+        )
+
+        self.lip_enc = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=d_model, nhead=nhead,
+                dim_feedforward=512, dropout=dropout,
+                batch_first=True
+            ), num_layers=num_layers
+        )
+
+        self.cross = nn.MultiheadAttention(
+            embed_dim=d_model, num_heads=nhead,
+            dropout=dropout, batch_first=True
+        )
+
+        self.fused_enc = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=d_model, nhead=nhead,
+                dim_feedforward=512, dropout=dropout,
+                batch_first=True
+            ), num_layers=num_layers
+        )
+
+        self.norm = nn.LayerNorm(d_model)
+
+        self.fc_out = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(d_model, num_classes)
+        )
+
+    def forward(self, hand_x, lip_x):
+        lip_x = lip_x.detach()
+        h = self.hand_fc(hand_x)
+        l = self.lip_fc(lip_x)
+
+        h = self.ln_hand(h)
+        l = self.ln_lip(l)
+
+        h = self.pos(h)
+        l = self.pos(l)
+
+        # self-attention per modality
+        h = self.hand_enc(h)
+        l = self.lip_enc(l)
+
+        # # hand attends to lips
+        # out_h, _ = self.cross(query=h, key=l, value=l)
+
+        # # lips attend to hands
+        # out_l, _ = self.cross(query=l, key=h, value=h)
+
+        # # fuse
+        # out = out_h + out_l
+
+        # # cross attention with residual
+        # attn_out, _ = self.cross(query=h, key=l, value=l)
+        # h = h + attn_out       # residual
+        # out = self.norm(h)
+        
+        # # cross attention: hand queries lip
+        out, _ = self.cross(query=h, key=l, value=l)
+
+        # out = self.fused_enc(out)
+        out = self.norm(out)
+        return self.fc_out(out)
+
+
+def train_ctc(model, train_loader, test_loader, criterion_ctc, optimizer, epochs,
+              early_stop_patience=200, save_path='handsandmouthbothcrossce90.pth'):
+    """
+    with ctcword for cslr as well, only CTC loss
+    0.9 is self explanatory
+    0.5 made learning rate 1e-3
+    alpha: weight for CTC loss
+    beta: weight for CrossEntropy loss
+    """
+    ce_loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # blank=0
+    best_cer = 100
+    # best_model = copy.deepcopy(model)
+    epochs_since_improvement = 0
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer,
+    #     mode='min',    
+    #     factor=0.5,    
+    #     patience=5,   
+    #     verbose=True
+    # )
+
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+
+        for batch in train_loader:
+            if len(batch) == 8:
+                inputs, inputslips, targets, input_lengths, target_lengths, target_list, framewise_targets, allowed_list = batch
+            else:
+                raise ValueError("collate_ctc must return framewise_targets for CE loss.")
+            inputs = inputs.to(DEVICE, non_blocking=True)
+            inputslips = inputslips.to(DEVICE, non_blocking=True)
+            targets = targets.to(DEVICE, non_blocking=True)
+            framewise_targets = framewise_targets.to(DEVICE, non_blocking=True)
+            optimizer.zero_grad()
+            logits = model(inputs, inputslips)  # (B, T, C)
+            log_probs = F.log_softmax(logits, dim=2)  # (B, T, C)
+
+            masked_log_probs = log_probs.clone()
+            for i, allowed in enumerate(allowed_list):
+                disallowed_idx = [char_to_idx[c] for c in char_to_idx if c not in allowed]
+                disallowed_idx = [idx for idx in disallowed_idx if idx != 0]  # keep BLANK
+                masked_log_probs[i, :, disallowed_idx] = float('-inf')
+
+            #CTC
+            loss_ctc = criterion_ctc(
+                masked_log_probs.transpose(0, 1),  
+                targets,
+                input_lengths,
+                target_lengths
+            )
+
+            #CE
+            B, T, C = logits.shape
+            logits_flat = logits.reshape(B * T, C)
+            framewise_targets_flat = framewise_targets.reshape(B * T)
+            valid_mask = framewise_targets_flat != 0
+            if valid_mask.any():
+                logits_valid = logits_flat[valid_mask]
+                targets_valid = framewise_targets_flat[valid_mask]
+                loss_ce = ce_loss_fn(logits_valid, targets_valid)
+                alpha, beta = 0.9, 0.1
+            # else:
+            #     loss_ce = torch.tensor(0.0, device=DEVICE)
+            #     alpha, beta = 1.0, 0.0  
+
+            loss = alpha * loss_ctc + beta * loss_ce
+            # loss = loss_ctc
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+
+            total_loss += loss.item()
+
+
+        val_loss, cer = evaluate_ctc(model, test_loader)
+        # scheduler.step(cer)
+        # current_lr = optimizer.param_groups[0]['lr']
+
+        if cer < best_cer:
+            best_cer = cer
+            #best_model = copy.deepcopy(model)
+            epochs_since_improvement = 0
+            torch.save(model.state_dict(), save_path)
+            print(f"New best model at epoch {epoch}: CER={best_cer:.2f}% (saved to {save_path})")
+        else:
+            epochs_since_improvement += 1
+
+
+        if epochs_since_improvement >= early_stop_patience:
+            print(f"No improvement for {early_stop_patience} epochs. Stopping training.")
+            break
+
+        if epoch % 100 == 0:
+            print(f"Epoch {epoch}: Current CER={cer:.2f}%, Best CER={best_cer:.2f}%")
+
+    return best_cer
+
+
+def decode_indices(indices):
+    decoded = []
+    prev = -1
+    for i in indices:
+        if i != prev and i != 0:  # skip blanks and repeated characters
+            decoded.append(idx_to_char[i])
+        prev = i
+    return ''.join(decoded)
+
+def evaluate_ctc(model, dataloader, verbose=False):
+    model.eval()
+    total_loss = 0
+    total_chars = 0
+    total_errors = 0
+    
+    criterion = nn.CTCLoss(blank=0, zero_infinity=True)
+
+    with torch.no_grad():
+        for inputs, inputslips, targets, input_lengths, target_lengths, target_list in dataloader:
+            inputs = inputs.to(DEVICE, non_blocking=True)
+            inputslips = inputslips.to(DEVICE, non_blocking=True)
+            targets = targets.to(DEVICE, non_blocking=True)
+            # framewise_targets = framewise_targets.to(DEVICE, non_blocking=True)
+            logits = model(inputs, inputslips)  # (B, T, C)
+            log_probs = F.log_softmax(logits, dim=2).transpose(0, 1)  # (T, B, C)
+            loss = criterion(log_probs, targets, input_lengths, target_lengths)
+            total_loss += loss.item()
+
+            pred = log_probs.argmax(dim=2).transpose(0, 1)  # (B, T)
+
+            for i, length in enumerate(input_lengths):
+                pred_seq = pred[i][:length].cpu().tolist()
+                decoded = decode_indices(pred_seq)
+                target_word = ''.join([idx_to_char[c.item()] for c in target_list[i]])
+                if verbose:
+                    print(f"GT: '{target_word}' | Pred: '{decoded}'")
+
+                dist = levenshtein_distance(target_word, decoded)
+                total_errors += dist
+                total_chars += len(target_word)
+
+    avg_loss = total_loss / len(dataloader)
+    cer = 100.0 * total_errors / total_chars if total_chars > 0 else 0.0
+    #print(f"Evaluation Loss: {avg_loss:.4f}, CER: {cer:.2f}%")
+    return avg_loss, cer
+
+
+class WordCTCDatasetTest(Dataset):
+    def __init__(self, h5_path, scaler, scalerlip):
+        with h5py.File(h5_path, 'r') as f:
+            self.features = f['video/features'][:]
+            self.lipfeatures = f['video/autoavsr'][:]
+            self.subtitles = f['video/subtitle'][:]
+            self.frame_numbers = f['video/frame_number'][:]
+            self.temporalletter = f['video/temporalletter2'][:]
+        reshaped = self.features.reshape(-1, self.features.shape[-1])
+        self.feat2 = scaler.transform(reshaped).reshape(self.features.shape)
+
+        reshaped = self.lipfeatures.reshape(-1, self.lipfeatures.shape[-1])
+        self.feat1 = scalerlip.transform(reshaped).reshape(self.lipfeatures.shape)
+        # self.feature = np.concatenate((feat1, feat2), axis=1)
+        self.groups = group_evaluate(self.subtitles, self.frame_numbers)
+        print(f"Number of testing samples (words): {len(self.groups)}")
+
+    def __len__(self):
+        return len(self.groups)
+
+    def __getitem__(self, idx):
+        indices = self.groups[idx]
+        x = self.feat2[indices]
+        z = self.feat1[indices]
+        # print(f"Indices: {indices}")
+        # letter = self.temporalletter[indices]
+        # print(letter)
+
+        raw_label = self.subtitles[indices[0]].decode("utf-8").strip()
+        words = raw_label.split()
+
+        if words:
+            word = words[0].lower()
+            if "*" in word and len(words) > 1:
+                word = words[1].lower()
+        else:
+            word = ""
+        y = encode_word(word)
+        # fw_bytes = self.temporalletter[indices]  # shape (num_frames, 1)
+        # # print(fw_bytes.shape)
+        # fw_bytes_flat = fw_bytes.flatten()       # shape (num_frames,)
+        # # print(fw_bytes_flat.shape)
+
+        # fw_letters = [b.decode('utf-8') for b in fw_bytes_flat]
+
+        # fw_letters_encoded = [encode_word(l) for l in fw_letters]
+        
+        # fw_targets = torch.tensor(fw_letters_encoded, dtype=torch.long)
+
+        return torch.tensor(x, dtype=torch.float32), torch.tensor(z, dtype=torch.float32), torch.tensor(y, dtype=torch.long)
+
+
+def main():
+    scaler = joblib.load(SCALER_PATH)
+    scalerlip = joblib.load(SCALER_LIP)
+
+    # with h5py.File(CSLRTRAIN, 'r') as f:
+    #     dataset = f['video/subtitle'][:]
+    #     print(type(dataset))  # This will print the h5py Dataset object type
+    # with h5py.File(TRANSPELLERTRAIN, 'r') as f:
+    #     dataset2 = f['video/predword'][:]
+    #     print(type(dataset2))  # This will print the h5py Dataset object type
+
+    trainingdataset = WordCTCDataset(CSLRTRAIN, scaler, scalerlip)
+    testingdataset = WordCTCDatasetTest(CSLRTEST, scaler, scalerlip)
+
+    #testingdataset = WordCTCDatasetTemp2(CSLRTEST, scaler, scalerlip)
+    #testload = DataLoader(testingdataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_ctc)
+
+    testload = DataLoader(testingdataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_ctctest)
+    transpelleradd = Transpeller(TRANSPELLERTRAIN, scaler, scalerlip)
+    transpelleradd1 = Transpeller(TRANSPELLERTRAIN1, scaler, scalerlip)
+    transpelleradd2 = Transpeller(TRANSPELLERTRAIN2, scaler, scalerlip)
+    transpelleradd3 = Transpeller(TRANSPELLERTRAIN3, scaler, scalerlip)
+    transpelleradd4 = Transpeller(TRANSPELLERTRAIN4, scaler, scalerlip)
+    transpelleradd5 = Transpeller(TRANSPELLERTRAIN5, scaler, scalerlip)
+    transpelleradd6 = Transpeller(TRANSPELLERTRAIN6, scaler, scalerlip)
+    transpelleradd7 = Transpeller(TRANSPELLERTRAIN7, scaler, scalerlip)
+    transpelleradd8 = Transpeller(TRANSPELLERTRAIN8, scaler, scalerlip)
+    transpelleradd9 = Transpeller(TRANSPELLERTRAIN9, scaler, scalerlip)
+    transpelleradd10 = Transpeller(TRANSPELLERTRAIN10, scaler, scalerlip)
+    transpelleradd11 = Transpeller(TRANSPELLERTRAIN11, scaler, scalerlip)
+    transpelleradd12 = Transpeller(TRANSPELLERTRAIN12, scaler, scalerlip)
+    transpelleradd13 = Transpeller(TRANSPELLERTRAIN13, scaler, scalerlip)
+    transpelleradd14 = Transpeller(TRANSPELLERTRAIN14, scaler, scalerlip)
+    transpelleradd15 = Transpeller(TRANSPELLERTRAIN15, scaler, scalerlip)
+    transpelleradd16 = Transpeller(TRANSPELLERTRAIN16, scaler, scalerlip)
+    combined_dataset = ConcatDataset([trainingdataset, transpelleradd, transpelleradd1, transpelleradd2, transpelleradd3, transpelleradd4, transpelleradd5, transpelleradd6,
+                                      transpelleradd7, transpelleradd8, transpelleradd9, transpelleradd10, transpelleradd11, transpelleradd12, transpelleradd13, transpelleradd14,transpelleradd15,
+                                      transpelleradd16])
+
+    sampler = make_balanced_sampler(combined_dataset)
+    trainload = DataLoader(
+        combined_dataset, batch_size=BATCH_SIZE,
+        sampler=sampler, collate_fn=collate_ctc
+    )
+    # trainload = DataLoader(
+    #     combined_dataset, batch_size=BATCH_SIZE,
+    #     shuffle=True, collate_fn=collate_ctc
+    # )
+
+    # trainload = DataLoader(trainingdataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_ctc)
+
+    model = TransformerCTC_LipCross(
+        lip_size=768,
+        hand_size=384
+    ).to(DEVICE)
+    criterion = nn.CTCLoss(blank=0, zero_infinity=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+    best = train_ctc(model, trainload, testload, criterion, optimizer, EPOCHS)
+
+if __name__ == "__main__":
+    main()
