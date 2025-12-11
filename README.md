@@ -27,3 +27,17 @@ Input h5 file from hammerprocessing.py that contains hand position information. 
 
 Hamerprocessing.py:
 Input a CSV file with the video ID and fingerspelling events recorded and outputs an h5 file with hand information. 
+
+For the fingerspelling letter recognition:
+Set up a conda environments
+conda create --name myenvironment python=3.9
+Activate it and install the requirements
+
+Take the h5 files which has the features, letter annotations and word annotations
+The collate CTC function collates all the frames together so that we can use CTC loss. All the length of the batches need to be the same and padded if not (padded number is 0)
+The CER is calculated every epoch and the epoch with the lowest CER is saved.
+
+The model is TransformerCTC_LipCross. I am trying to do 3 layers of self attention and then one layer of cross attention. 
+
+
+
