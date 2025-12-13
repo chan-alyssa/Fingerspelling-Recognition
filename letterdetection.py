@@ -12,7 +12,7 @@ import copy
 import matplotlib.pyplot as plt
 from torch.utils.data import WeightedRandomSampler
 import random
-
+import argparse
 import torch
 import random
 
@@ -621,6 +621,33 @@ class WordCTCDatasetTest(Dataset):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Train CTC model with hand–lip cross attention")
+    parser.add_argument(
+        "--save_path",
+        type=str,
+        default="model.pth",
+        help="Path to save best model (.pth)"
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=LR,
+        help="Learning rate"
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=EPOCHS,
+        help="Number of training epochs"
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=BATCH_SIZE,
+        help="Batch size"
+    )
+
+    args = parser.parse_args()
     scaler = joblib.load(SCALER_PATH)
     scalerlip = joblib.load(SCALER_LIP)
 
@@ -637,7 +664,7 @@ def main():
     #testingdataset = WordCTCDatasetTemp2(CSLRTEST, scaler, scalerlip)
     #testload = DataLoader(testingdataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_ctc)
 
-    testload = DataLoader(testingdataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_ctctest)
+    testload = DataLoader(testingdataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_ctctest)
     transpelleradd = Transpeller(TRANSPELLERTRAIN, scaler, scalerlip)
     transpelleradd1 = Transpeller(TRANSPELLERTRAIN1, scaler, scalerlip)
     transpelleradd2 = Transpeller(TRANSPELLERTRAIN2, scaler, scalerlip)
@@ -661,7 +688,7 @@ def main():
 
     sampler = make_balanced_sampler(combined_dataset)
     trainload = DataLoader(
-        combined_dataset, batch_size=BATCH_SIZE,
+        combined_dataset, batch_size=args.batch_size,
         sampler=sampler, collate_fn=collate_ctc
     )
     # trainload = DataLoader(
@@ -678,7 +705,14 @@ def main():
     criterion = nn.CTCLoss(blank=0, zero_infinity=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    best = train_ctc(model, trainload, testload, criterion, optimizer, EPOCHS)
-
+    best = train_ctc(
+        model,
+        trainload,
+        testload,
+        criterion,
+        optimizer,
+        epochs=args.epochs,
+        save_path=args.save_path
+    )
 if __name__ == "__main__":
     main()
