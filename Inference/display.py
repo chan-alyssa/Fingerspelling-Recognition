@@ -240,19 +240,19 @@ def main():
     # device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     # model = model.to(device)
     # model.eval()
-    model1 = BinaryClassifier(86)
-    model1.load_state_dict(torch.load('binary_classifierf86.pth'))
-    model1.eval()
+    # model1 = BinaryClassifier(86)
+    # model1.load_state_dict(torch.load('binary_classifierf86.pth'))
+    # model1.eval()
 
 
 
-    # renderer = Renderer(model_cfg, faces=model.mano.faces)
+    # # renderer = Renderer(model_cfg, faces=model.mano.faces)
     
-    # mano_cfg = {'data_dir': '_DATA/data/', 'model_path':'_DATA/data/mano/',
-    #             'gender':'neutral','num_hand_joints':15,'mean_params':'./_DATA/data/mano_mean_params.npz','create_body_pose': False}
-    # mano = MANO(**mano_cfg)
+    # # mano_cfg = {'data_dir': '_DATA/data/', 'model_path':'_DATA/data/mano/',
+    # #             'gender':'neutral','num_hand_joints':15,'mean_params':'./_DATA/data/mano_mean_params.npz','create_body_pose': False}
+    # # mano = MANO(**mano_cfg)
 
-    scaler = joblib.load('scalerf86.pkl')
+    # scaler = joblib.load('scalerf86.pkl')
     #try to iterate through folder of h5 files and do this
     h5file_path = args.h5file
     video_path = args.vid
