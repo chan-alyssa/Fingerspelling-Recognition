@@ -117,46 +117,6 @@ class MultiClassClassifier(nn.Module):
         return x
 
 
-
-# class Transpeller(Dataset):
-#     def __init__(self, h5_path, scaler):
-#         with h5py.File(h5_path, 'r') as f:
-#             self.features = f['video/features384'][:]
-#             self.subtitles = f['video/subtitle'][:]
-#             self.frame_numbers = f['video/frame_number'][:]
-#             self.predword = f['video/subtitle']
-
-#         reshaped = self.features.reshape(-1, self.features.shape[-1])
-#         self.features = scaler.transform(reshaped).reshape(self.features.shape)
-
-#         self.groups = group_by_subtitle_and_consecutive_frames(self.subtitles, self.frame_numbers)
-
-#     def __len__(self):
-#         return len(self.groups)
-
-#     def __getitem__(self, idx):
-#         indices = self.groups[idx]
-#         x = self.features[indices]
-
-#         raw_label = self.subtitles[indices[0]].decode("utf-8").strip()
-#         word = raw_label.split()[0].lower() if raw_label else ""
-
-
-#         y = encode_word(word)
-
-
-#         if word == '?':
-#             allowed = set()   # means: no restriction
-#         else:
-#             allowed = set(word)
-
-
-#         # print(f"Word: '{word}', Frame length: {x.shape[0]}")
-
-#         return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.long), allowed  # pass down the allowed chars
-
-
-
 class Transpeller(Dataset):
     def __init__(self, h5_path, scaler, scalerlip):
         with h5py.File(h5_path, 'r') as f:
@@ -283,37 +243,11 @@ class WordCTCDataset(Dataset):
         #     word = " "
         # print(raw_label,word)
 
-        # Keep only letters (remove numbers, punctuation, etc)
+
         word = re.sub(r'[^a-z]', '', word)
         # print(word)
         y = encode_word(word)
 
-        # # --- Priority 1: word inside parentheses ---
-        # match = re.search(r'\(([^)]+)\)', raw_label)
-        # if match:
-        #     word = match.group(1).split()[0]  # take first word inside ()
-        # else:
-        #     # --- Priority 2: first word if no parentheses ---
-        #     parts = raw_label.split()
-        #     word = parts[0] if parts else ""
-
-        # # --- Rule 3: remove if word contains '*' ---
-        # if "*" in word:
-        #     word = ""
-
-        # # --- Optional: remove extra punctuation ---
-        # word = re.sub(r'[^a-z]', '', word)  # keep only letters
-        # print(word)
-
-        # y = encode_word(word)
-        # raw_label = self.subtitles[indices[0]].decode("utf-8").strip()
-        # print(raw_label)
-        # word = raw_label.split()[0].lower() if raw_label else ""
-
-        # y = encode_word(word)
-        # word = raw_label.split()[0].lower() if raw_label else ""
-
-        # dynamically allowed chars for this word
 
         allowed = set(word)
 
@@ -387,37 +321,6 @@ def levenshtein_distance(ref, hyp):
 
 
 
-
-class TransformerCTC(nn.Module):
-    def __init__(self, input_size, num_classes, d_model=128, nhead=4, num_layers=3, dim_feedforward=512, dropout=0.2):
-        super(TransformerCTC, self).__init__()
-        self.input_fc = nn.Linear(input_size, d_model)  # project features → d_model
-        self.pos_encoder = PositionalEncoding(d_model, dropout)
-        self.norm = nn.LayerNorm(d_model)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            batch_first=True  # (B, T, F)
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        # self.fc_out = nn.Linear(d_model, num_classes)
-        self.fc_out = nn.Sequential(nn.Linear(d_model, d_model),
-                                    nn.ReLU(),
-                                    nn.Dropout(0.2),
-                                    nn.Linear(d_model, num_classes)
-                                )
-
-
-    def forward(self, x):
-        # x: (B, T, F)
-        x = self.input_fc(x)           # (B, T, d_model)
-        x = self.pos_encoder(x)        # add position info
-        x = self.transformer(x)        # (B, T, d_model)
-        x = self.norm(x)
-        x = self.fc_out(x)             # (B, T, num_classes)
-        return x
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
@@ -549,9 +452,7 @@ class TransformerVer2(nn.Module):
         self.hand_size = hand_size
         self.d_model = d_model
 
-        # ---------------------------
-        # 1) Project each modality
-        # ---------------------------
+
         self.lip_proj = nn.Linear(lip_size, d_model)
         self.hand_proj = nn.Linear(hand_size, d_model)
 
@@ -573,9 +474,7 @@ class TransformerVer2(nn.Module):
         # )
         # self.pos_enc_fused = PositionalEncoding(d_model*2, dropout=dropout)
 
-        # ---------------------------
-        # 2) Optional per-modality temporal transformers
-        # ---------------------------
+
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -586,9 +485,6 @@ class TransformerVer2(nn.Module):
         self.lip_transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.hand_transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        # ---------------------------
-        # 3) Final temporal transformer after fusion
-        # ---------------------------
         encoder_layer_fused = nn.TransformerEncoderLayer(
             d_model=d_model*2,
             nhead=nhead,
@@ -598,9 +494,7 @@ class TransformerVer2(nn.Module):
         )
         self.fused_transformer = nn.TransformerEncoder(encoder_layer_fused, num_layers=num_layers)
 
-        # ---------------------------
-        # 4) Output
-        # ---------------------------
+
         self.norm_fused = nn.LayerNorm(d_model*2)
         self.fc_out = nn.Sequential(nn.Linear(d_model*2, d_model),
                                     nn.ReLU(),
@@ -613,16 +507,10 @@ class TransformerVer2(nn.Module):
         # x: (B, T, F)
         # lip_x, hand_x = torch.split(x, [self.lip_size, self.hand_size], dim=2)
 
-        # ---------------------------
-        # Project + normalize
-        # ---------------------------
+
         #lip_p = self.ln_lip(self.lip_proj(lip_x.detach()))  # detach lip gradients if needed
         lip_p = self.ln_lip(self.lip_proj(lip_x))  # detach lip gradients if needed
         hand_p = self.ln_hand(self.hand_proj(hand_x))
-
-        # # ---------------------------
-        # # Optional per-modality transformer
-        # # ---------------------------
 
         # fused =  torch.concat([lip_p, hand_p], axis=-1)
         lip_p = self.pos_enc(lip_p)
@@ -649,9 +537,6 @@ class TransformerVer2(nn.Module):
         fused = self.fused_transformer(gate_input)
         fused = self.norm_fused(fused)
 
-        # ---------------------------
-        # Output per frame
-        # ---------------------------
         out = self.fc_out(fused)  # (B, T, num_classes)
         return out
     
@@ -672,11 +557,7 @@ def main():
     parser.add_argument('--model', type=str)
     args = parser.parse_args()
 
-    # SCALER_LIP = "scalerautoavsr.pkl"
-    # SCALER_PATH = "scalerhands.pkl"
-    # H5_PATH = "ammonite1.mp4.h5"
-
-    print(args.scalerhands)
+    # print(args.scalerhands)
 
     scaler = joblib.load(args.scalerhands)
     scalerlip = joblib.load(args.scalerlip)
@@ -685,21 +566,11 @@ def main():
         hand_size=384
     ).to(DEVICE)
 
-    #model.load_state_dict(torch.load("multiclassifier.pth", map_location=DEVICE))
     model.load_state_dict(torch.load(args.model, map_location=DEVICE))
 
     model.eval()
 
-    # # Loop through all H5 files
-    # for h5_file in folder_path.glob("*.h5"):
-    #     print(f"Processing {h5_file.name}...")
-    #     add_ctcword_per_frame(str(h5_file), model, scaler, scalerlip, batch_size=BATCH_SIZE, device=DEVICE)
     add_ctcword_per_frame(args.h5file,model, scaler, scalerlip, batch_size=BATCH_SIZE, device=DEVICE)
 
-    # scaler = joblib.load(SCALER_PATH)
-    # model = TransformerCTC(INPUT_DIM, OUTPUT_DIM).to(DEVICE)
-    # model.load_state_dict(torch.load("/work/alyssa/ctcloss/transformeralldataoversample3.3.pth", map_location=DEVICE))
-
-    # add_ctcword_per_frame(H5_PATH, model, scaler, batch_size=BATCH_SIZE, device=DEVICE)
 if __name__ == "__main__":
     main()
