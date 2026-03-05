@@ -114,7 +114,7 @@ def distance(a, b):
 
 
 def calculate_metrics(predictions, ground_truth):
-    """Calculate evaluation metrics."""
+
     TP = np.sum((predictions == 1) & (ground_truth == 1))
     TN = np.sum((predictions == 0) & (ground_truth == 0))
     FP = np.sum((predictions == 1) & (ground_truth == 0))
@@ -187,7 +187,7 @@ def main():
     mano = MANO(**mano_cfg)
 
     model1 = BinaryClassifier(86)
-    model1.load_state_dict(torch.load('binary_classifierf86.pth'))
+    model1.load_state_dict(torch.load('binary_classifierf86aug.pth'))
     model1.eval()
 
     scaler = joblib.load('scalerf86.pkl')
