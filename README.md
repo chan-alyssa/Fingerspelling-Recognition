@@ -1,7 +1,7 @@
 # Recognising BSL Fingerspelling in Continuous Signing Sequences
 
 
-## Enviroment and Checkpoints
+## Enviroment
 - ```pip install -r requirements.txt ```
 - Create conda environment for fs23k ``` conda create --name fs23k python=3.10
 conda activate fs23k ```
