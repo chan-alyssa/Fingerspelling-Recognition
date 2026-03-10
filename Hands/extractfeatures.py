@@ -190,7 +190,7 @@ def main():
     model1.load_state_dict(torch.load('binary_classifierf86aug.pth'))
     model1.eval()
 
-    scaler = joblib.load('scalerf86.pkl')
+    scaler = joblib.load('scalerhands.pkl')
     # directory = args.directory
     # for filename in os.listdir(directory):
 
