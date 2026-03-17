@@ -220,11 +220,11 @@ def main():
             # g1 = hf.create_group('more')
             # g1.create_dataset('features',(total_frames,5))
             # data1=['more/features']
-        del f['video/features86']
-        del f['video/features384']
-        del f['video/label']
-        del f['video/cleanedlabel']
-        del f['video/frame_number']
+        # del f['video/features86']
+        # del f['video/features384']
+        # del f['video/label']
+        # del f['video/cleanedlabel']
+        # del f['video/frame_number']
         video_grp.create_dataset('features86', (total_frames, 86))
         data1 = video_grp['features86']
         video_grp.create_dataset('features384', (total_frames, 384))
