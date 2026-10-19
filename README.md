@@ -32,3 +32,5 @@ conda activate fs23k ```
  The temporal boundaries dataset contain cleaned, time-aligned entries from the Transpeller automatic annotations, with false positives and unavailable videos removed. 
  
  The word-level dataset is a subset of the temporal boundaries dataset, where the word is fully spelt out and all letters are present. Often when fingerspelling, signers abbreviate words so only 'd' is spelt to communicate 'Darwin'. 
+
+**Please note this repo can only be used for non commercial research**
